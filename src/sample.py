@@ -1,3 +1,6 @@
+
+# run $env:KMP_DUPLICATE_LIB_OK="TRUE" to avoid KMP_DUPLICATE_LIB_OK error
+
 import torch
 import json
 import os
@@ -120,7 +123,7 @@ def main():
 
     # --- Generate a sample ---
     # This is your drawing input (in meters). Start with a few points.
-    start_drawing = [[0.0, 0.0], [5.0, 0.0]]
+    start_drawing = [[0.0, 0.0], [5.0, 5.0]]
     
     print(f"\nStarting generation with input: {start_drawing}")
     generated_tokens = sample_sequence(model, start_drawing, max_len=500, device=device, meta=meta)
