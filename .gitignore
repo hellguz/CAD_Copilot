@@ -1,1 +1,3 @@
 .gpt/*.txt
+data/*.json
+data/*.svg
