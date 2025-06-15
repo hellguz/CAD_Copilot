@@ -1,10 +1,10 @@
-
 # run $env:KMP_DUPLICATE_LIB_OK="TRUE" to avoid KMP_DUPLICATE_LIB_OK error
 
 import torch
 import json
 import os
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 import config
 from model import FloorplanTransformer
@@ -68,7 +68,8 @@ def sample_sequence(model, start_sequence, max_len, device, meta):
     current_tokens = torch.tensor([input_tokens], dtype=torch.long).to(device)
 
     with torch.no_grad():
-        for _ in range(max_len):
+        progress_bar = tqdm(range(max_len), desc="Generating")
+        for _ in progress_bar:
             if current_tokens.size(1) == 0:
                 print("Error: Starting sequence cannot be empty for this sampling script.")
                 return []
@@ -87,7 +88,8 @@ def sample_sequence(model, start_sequence, max_len, device, meta):
             next_token = torch.gather(top_k_indices, -1, next_token_relative_idx).squeeze()
 
             if next_token.item() == eof_token:
-                print("--- End of Floorplan token generated ---")
+                print("\n--- End of Floorplan token generated ---")
+                progress_bar.close()
                 break
             
             generated_sequence.append(next_token.item())
@@ -122,19 +124,38 @@ def main():
     print("Model loaded successfully.")
 
     # --- Generate a sample ---
-    # This is your drawing input (in meters). Start with a few points.
-    start_drawing = [[0.0, 0.0], [5.0, 5.0]]
+    # NEW: A more sophisticated starting prompt that draws two connected, unfinished rooms.
+    start_drawing = [
+        # Room 1 (4m x 4m), three sides drawn
+        [0.0, 0.0],
+        [4.0, 0.0],
+        [4.0, 4.0],
+        [0.0, 4.0],
+        # Room 2 (3m x 3m), connected to the first room's wall, unfinished
+        [4.0, 2.0], 
+        [7.0, 2.0],
+        [7.0, 5.0],
+        [4.0, 5.0],
+    ]
     
-    print(f"\nStarting generation with input: {start_drawing}")
+    print(f"\nStarting generation with input: {len(start_drawing)} points.")
+    # Generate up to 500 new tokens
     generated_tokens = sample_sequence(model, start_drawing, max_len=500, device=device, meta=meta)
 
     # Decode tokens into a list of polylines
     polylines = []
     current_poly = []
+    # Add the initial drawing to the polylines for visualization
+    # Note: We are assuming the start_drawing is a single polyline for simplicity here.
+    if start_drawing:
+        polylines.append(start_drawing)
+
     token_offset = meta['token_offset']
     eol_token = meta['eol_token']
-
-    token_iterator = iter(generated_tokens)
+    
+    # Start decoding from where the input tokens left off
+    token_iterator = iter(generated_tokens[len(start_drawing)*2:])
+    
     for t1 in token_iterator:
         if t1 == eol_token:
             if current_poly:
@@ -153,7 +174,7 @@ def main():
     if current_poly:
         polylines.append(current_poly)
 
-    # Call the new plotting function
+    # Call the plotting function
     save_plot_as_image(polylines, filename="generated_floorplan.png")
 
 if __name__ == "__main__":
