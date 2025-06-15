@@ -9,7 +9,7 @@ from src import config
 from src.model import FloorplanTransformer
 from src.dataset import FloorplanDataset, collate_fn
 
-def train_epoch(model, dataloader, criterion, optimizer, device):
+def train_epoch(model, dataloader, criterion, optimizer, device, pad_token_value):
     model.train()
     total_loss = 0
     
@@ -18,7 +18,8 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
         inputs, targets = inputs.to(device), targets.to(device)
         
         # Create masks
-        src_padding_mask = (inputs == config.VOCAB_SIZE).to(device) # Needs correct pad token value
+        # CORRECTED: Use the actual pad_token_value for the mask
+        src_padding_mask = (inputs == pad_token_value).to(device)
         tgt_mask = FloorplanTransformer.generate_square_subsequent_mask(inputs.size(1), device)
 
         # Forward pass
@@ -38,14 +39,16 @@ def train_epoch(model, dataloader, criterion, optimizer, device):
 
     return total_loss / len(dataloader)
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, criterion, device, pad_token_value):
     model.eval()
     total_loss = 0
     with torch.no_grad():
         progress_bar = tqdm(dataloader, desc="Evaluating", leave=False)
         for inputs, targets in progress_bar:
             inputs, targets = inputs.to(device), targets.to(device)
-            src_padding_mask = (inputs == config.VOCAB_SIZE).to(device)
+            
+            # CORRECTED: Use the actual pad_token_value for the mask
+            src_padding_mask = (inputs == pad_token_value).to(device)
             tgt_mask = FloorplanTransformer.generate_square_subsequent_mask(inputs.size(1), device)
             
             output = model(inputs, src_mask=tgt_mask, src_padding_mask=src_padding_mask)
@@ -63,9 +66,9 @@ def main():
     with open(config.PROCESSED_DATA_PATH, 'r') as f:
         meta = json.load(f)['meta']
     config.VOCAB_SIZE = meta['vocab_size']
+    pad_token_value = meta['pad_token']
     
     # Dataloaders
-    pad_token_value = meta['pad_token']
     train_dataset = FloorplanDataset(config.PROCESSED_DATA_PATH, 'train', config.MAX_SEQ_LENGTH)
     val_dataset = FloorplanDataset(config.PROCESSED_DATA_PATH, 'val', config.MAX_SEQ_LENGTH)
     
@@ -91,16 +94,19 @@ def main():
 
     best_val_loss = float('inf')
     for epoch in range(1, config.NUM_EPOCHS + 1):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_loss = evaluate(model, val_loader, criterion, device)
+        train_loss = train_epoch(model, train_loader, criterion, optimizer, device, pad_token_value)
+        
+        # Since val_loader can be empty, check before evaluating
+        val_loss = float('nan')
+        if val_loader:
+            val_loss = evaluate(model, val_loader, criterion, device, pad_token_value)
         
         print(f"Epoch {epoch}/{config.NUM_EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            torch.save(model.state_dict(), os.path.join(config.MODEL_SAVE_PATH, 'best_model.pth'))
-            print("  -> Saved new best model.")
+        # Save the model after each epoch for a toy dataset
+        # In a real project, you'd save based on best_val_loss
+        torch.save(model.state_dict(), os.path.join(config.MODEL_SAVE_PATH, 'best_model.pth'))
+        print("  -> Saved model checkpoint.")
 
 if __name__ == "__main__":
     main()
-
