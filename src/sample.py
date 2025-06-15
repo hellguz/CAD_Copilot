@@ -1,8 +1,48 @@
 import torch
 import json
+import os
+import matplotlib.pyplot as plt
 
-from src import config
-from src.model import FloorplanTransformer
+import config
+from model import FloorplanTransformer
+
+def save_plot_as_image(polylines, filename="generated_floorplan.png"):
+    """
+    Renders the generated polylines into a PNG image file using Matplotlib.
+    """
+    if not polylines or not polylines[0]:
+        print("[No geometry to plot]")
+        return
+
+    fig, ax = plt.subplots(figsize=(12, 12))
+
+    # Plot each polyline with markers for the vertices
+    for poly in polylines:
+        if len(poly) > 0:
+            x_coords = [p[0] for p in poly]
+            y_coords = [p[1] for p in poly]
+            ax.plot(x_coords, y_coords, marker='o', markersize=3, linestyle='-')
+
+    # Highlight the very first point of the drawing
+    start_point = polylines[0][0]
+    ax.plot(start_point[0], start_point[1], 'go', markersize=10, label='Start')
+
+    # Highlight the very last point of the drawing
+    end_point = polylines[-1][-1]
+    ax.plot(end_point[0], end_point[1], 'ro', markersize=10, label='End')
+
+    ax.set_title("Generated Floorplan Output")
+    ax.set_xlabel("X (meters)")
+    ax.set_ylabel("Y (meters)")
+    # This is critical to ensure that squares look like squares
+    ax.set_aspect('equal', adjustable='box')
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5)
+    ax.legend()
+    
+    plt.savefig(filename)
+    plt.close(fig) # Free up memory
+    print(f"✅ Plot saved successfully to '{filename}'")
+
 
 def sample_sequence(model, start_sequence, max_len, device, meta):
     """
@@ -13,30 +53,32 @@ def sample_sequence(model, start_sequence, max_len, device, meta):
     eof_token = meta['eof_token']
 
     # Convert start sequence (in meters) to tokens
-    # Example: start_sequence = [[0.0, 0.0], [5.0, 0.0]]
     input_tokens = []
-    for x, y in start_sequence:
-        token_x = int(round(x * 100)) + token_offset
-        token_y = int(round(y * 100)) + token_offset
-        input_tokens.extend([token_x, token_y])
+    if start_sequence:
+        for x, y in start_sequence:
+            # Assuming quantization factor was 100 to get cm
+            token_x = int(round(x * 100)) + token_offset
+            token_y = int(round(y * 100)) + token_offset
+            input_tokens.extend([token_x, token_y])
 
     generated_sequence = input_tokens[:]
     current_tokens = torch.tensor([input_tokens], dtype=torch.long).to(device)
 
     with torch.no_grad():
-        for _ in range(max_len - len(input_tokens)):
+        for _ in range(max_len):
+            if current_tokens.size(1) == 0:
+                print("Error: Starting sequence cannot be empty for this sampling script.")
+                return []
+
             seq_len = current_tokens.size(1)
             mask = FloorplanTransformer.generate_square_subsequent_mask(seq_len, device)
             
             output = model(current_tokens, src_mask=mask)
-            # Get the logits for the last token in the sequence
             last_token_logits = output[:, -1, :]
             
-            # Use top-k sampling for more diverse results
             top_k = 5
             top_k_logits, top_k_indices = torch.topk(last_token_logits, top_k, dim=-1)
             
-            # Sample from the top-k distribution
             probabilities = torch.nn.functional.softmax(top_k_logits, dim=-1)
             next_token_relative_idx = torch.multinomial(probabilities, 1)
             next_token = torch.gather(top_k_indices, -1, next_token_relative_idx).squeeze()
@@ -77,42 +119,39 @@ def main():
     print("Model loaded successfully.")
 
     # --- Generate a sample ---
-    # This is your drawing input from Rhino (in meters)
-    start_drawing = [[0.0, 0.0], [5.0, 0.0], [5.0, 4.0]] # Start of a rectangle
+    # This is your drawing input (in meters). Start with a few points.
+    start_drawing = [[0.0, 0.0], [5.0, 0.0]]
     
     print(f"\nStarting generation with input: {start_drawing}")
-    generated_tokens = sample_sequence(model, start_drawing, max_len=100, device=device, meta=meta)
+    generated_tokens = sample_sequence(model, start_drawing, max_len=500, device=device, meta=meta)
 
-    # Decode tokens back to coordinates
-    points = []
+    # Decode tokens into a list of polylines
+    polylines = []
+    current_poly = []
     token_offset = meta['token_offset']
-    special_tokens = {v: k for k, v in meta.items() if isinstance(v, int) and 'token' in k}
+    eol_token = meta['eol_token']
 
     token_iterator = iter(generated_tokens)
-    try:
-        while True:
-            t1 = next(token_iterator)
-            if t1 in special_tokens:
-                points.append(f"<{special_tokens.get(t1).upper()}>")
-                continue
+    for t1 in token_iterator:
+        if t1 == eol_token:
+            if current_poly:
+                polylines.append(current_poly)
+            current_poly = []
+            continue
+        try:
             t2 = next(token_iterator)
-            if t2 in special_tokens:
-                 points.append(f"<{special_tokens.get(t2).upper()}>")
-                 continue
-
+            # Convert back to meters assuming quantization factor was 100
             x = (t1 - token_offset) / 100.0
             y = (t2 - token_offset) / 100.0
-            points.append((x, y))
+            current_poly.append([x, y])
+        except StopIteration:
+            break
+            
+    if current_poly:
+        polylines.append(current_poly)
 
-    except StopIteration:
-        pass # End of sequence
-    
-    print("\n--- Generated Drawing ---")
-    for p in points:
-        print(p)
-
+    # Call the new plotting function
+    save_plot_as_image(polylines, filename="generated_floorplan.png")
 
 if __name__ == "__main__":
-    import os
     main()
-
