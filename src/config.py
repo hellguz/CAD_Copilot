@@ -6,7 +6,7 @@ PROCESSED_DATA_PATH = "data/processed/tokenized_floorplans.json"
 # vocab size. You MUST run check_max_len.py to find the correct max length
 # for your full dataset and update MAX_SEQ_LENGTH below.
 VOCAB_SIZE = 10004
-MAX_SEQ_LENGTH = 5120
+MAX_SEQ_LENGTH = 136704
 
 # Model Hyperparameters (Medium-sized for a good balance of performance and speed)
 EMBEDDING_DIM = 768      # Model's main dimension (similar to GPT-2 small)

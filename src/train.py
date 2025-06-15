@@ -5,9 +5,9 @@ import json
 from tqdm import tqdm
 import os
 
-from src import config
-from src.model import FloorplanTransformer
-from src.dataset import FloorplanDataset, collate_fn
+import config
+from model import FloorplanTransformer
+from dataset import FloorplanDataset, collate_fn
 
 def train_epoch(model, dataloader, criterion, optimizer, device, pad_token_value):
     model.train()
