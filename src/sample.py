@@ -1,13 +1,12 @@
-# run $env:KMP_DUPLICATE_LIB_OK="TRUE" to avoid KMP_DUPLICATE_LIB_OK error
-
 import torch
 import json
 import os
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-import config
-from model import FloorplanTransformer
+from src import config
+from src.model import FloorplanTransformer
+from torch.cuda.amp import autocast
 
 def save_plot_as_image(polylines, filename="generated_floorplan.png"):
     """
@@ -47,39 +46,34 @@ def save_plot_as_image(polylines, filename="generated_floorplan.png"):
     print(f"✅ Plot saved successfully to '{filename}'")
 
 
-def sample_sequence(model, start_sequence, max_len, device, meta):
+def sample_sequence(model, input_tokens, max_len, device, meta):
     """
-    Generates a sequence autoregressively.
+    Generates a sequence autoregressively starting from a prompt of tokens.
     """
     model.eval()
-    token_offset = meta['token_offset']
     eof_token = meta['eof_token']
 
-    # Convert start sequence (in meters) to tokens
-    input_tokens = []
-    if start_sequence:
-        for x, y in start_sequence:
-            # Assuming quantization factor was 100 to get cm
-            token_x = int(round(x * 100)) + token_offset
-            token_y = int(round(y * 100)) + token_offset
-            input_tokens.extend([token_x, token_y])
-
-    generated_sequence = input_tokens[:]
+    generated_sequence = list(input_tokens)
     current_tokens = torch.tensor([input_tokens], dtype=torch.long).to(device)
 
     with torch.no_grad():
         progress_bar = tqdm(range(max_len), desc="Generating")
         for _ in progress_bar:
-            if current_tokens.size(1) == 0:
-                print("Error: Starting sequence cannot be empty for this sampling script.")
-                return []
-
+            # Ensure the input sequence doesn't exceed the model's max length
             seq_len = current_tokens.size(1)
+            if seq_len >= config.MAX_SEQ_LENGTH:
+                print("\n--- Max sequence length reached, stopping generation. ---")
+                break
+                
             mask = FloorplanTransformer.generate_square_subsequent_mask(seq_len, device)
             
-            output = model(current_tokens, src_mask=mask)
+            # Use autocast for faster inference with mixed precision
+            with autocast():
+                output = model(current_tokens, src_mask=mask)
+
             last_token_logits = output[:, -1, :]
             
+            # Use top-k sampling for more diverse results
             top_k = 5
             top_k_logits, top_k_indices = torch.topk(last_token_logits, top_k, dim=-1)
             
@@ -103,10 +97,9 @@ def main():
     
     with open(config.PROCESSED_DATA_PATH, 'r') as f:
         meta = json.load(f)['meta']
-    config.VOCAB_SIZE = meta['vocab_size']
     
     model = FloorplanTransformer(
-        vocab_size=config.VOCAB_SIZE,
+        vocab_size=meta['vocab_size'],
         d_model=config.EMBEDDING_DIM,
         nhead=config.NUM_HEADS,
         d_hid=config.D_FF,
@@ -123,39 +116,37 @@ def main():
     model.load_state_dict(torch.load(model_path, map_location=device))
     print("Model loaded successfully.")
 
-    # --- Generate a sample ---
-    # NEW: A more sophisticated starting prompt that draws two connected, unfinished rooms.
+    # --- Define the starting prompt ---
+    # This prompt contains two separate, unfinished rooms.
     start_drawing = [
-        # Room 1 (4m x 4m), three sides drawn
-        [0.0, 0.0],
-        [4.0, 0.0],
-        [4.0, 4.0],
-        [0.0, 4.0],
+        # Room 1 (4m x 4m), a closed rectangle
+        [[0.0, 0.0], [4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]],
         # Room 2 (3m x 3m), connected to the first room's wall, unfinished
-        [4.0, 2.0], 
-        [7.0, 2.0],
-        [7.0, 5.0],
-        [4.0, 5.0],
+        [[4.0, 2.0], [7.0, 2.0], [7.0, 5.0]]
     ]
     
-    print(f"\nStarting generation with input: {len(start_drawing)} points.")
-    # Generate up to 500 new tokens
-    generated_tokens = sample_sequence(model, start_drawing, max_len=500, device=device, meta=meta)
+    # --- Tokenize the prompt ---
+    prompt_tokens = []
+    for poly in start_drawing:
+        for x, y in poly:
+            token_x = int(round(x * 100)) + meta['token_offset']
+            token_y = int(round(y * 100)) + meta['token_offset']
+            prompt_tokens.extend([token_x, token_y])
+        # Add an End-of-Polyline token after each shape in the prompt
+        prompt_tokens.append(meta['eol_token'])
 
-    # Decode tokens into a list of polylines
+    print(f"\nStarting generation with a prompt of {len(start_drawing)} polylines...")
+    
+    # Generate up to 500 new tokens
+    all_tokens = sample_sequence(model, prompt_tokens, max_len=500, device=device, meta=meta)
+
+    # --- Decode all tokens for visualization ---
     polylines = []
     current_poly = []
-    # Add the initial drawing to the polylines for visualization
-    # Note: We are assuming the start_drawing is a single polyline for simplicity here.
-    if start_drawing:
-        polylines.append(start_drawing)
-
     token_offset = meta['token_offset']
     eol_token = meta['eol_token']
-    
-    # Start decoding from where the input tokens left off
-    token_iterator = iter(generated_tokens[len(start_drawing)*2:])
-    
+
+    token_iterator = iter(all_tokens)
     for t1 in token_iterator:
         if t1 == eol_token:
             if current_poly:
@@ -178,4 +169,7 @@ def main():
     save_plot_as_image(polylines, filename="generated_floorplan.png")
 
 if __name__ == "__main__":
+    # This allows you to run the script directly
+    from src import config
+    from src.model import FloorplanTransformer
     main()
