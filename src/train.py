@@ -92,6 +92,14 @@ def main():
     print(f"Model has {sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters")
     os.makedirs(config.MODEL_SAVE_PATH, exist_ok=True)
 
+
+    # Since val_loader can be empty, check before evaluating
+    val_loss = float('nan')
+    train_loss = float('nan')
+    if val_loader:
+        val_loss = evaluate(model, val_loader, criterion, device, pad_token_value)
+    print(f"Epoch 0/{config.NUM_EPOCHS} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+
     best_val_loss = float('inf')
     for epoch in range(1, config.NUM_EPOCHS + 1):
         train_loss = train_epoch(model, train_loader, criterion, optimizer, device, pad_token_value)
