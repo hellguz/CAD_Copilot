@@ -12,8 +12,6 @@
 
 This project is a deep dive into sequence modeling for generative CAD. Inspired by how GitHub Copilot completes code, **Floorplan Copilot** aims to autocomplete architectural drawings. The core idea is to treat a floorplan not as a static image, but as a sequential series of drawing commands (polylines) and train a Transformer model to predict the next point, line, or even an entire room.
 
-The model is trained on thousands of real-world floorplan SVGs, learning the underlying "language" of architectural design—from the high-level structure of walls and rooms down to the placement of windows and fixtures.
-
 ### 🚀 Core Features
 
 -   **SVG Data Pipeline:** A robust pipeline to parse, clean, and process complex SVG floorplans into a model-ready format.
@@ -29,6 +27,14 @@ The project is a complete pipeline from raw data to generative output:
 2.  **Tokenization (`process_data.py`):** The sorted polylines are normalized, quantized (converted to integer coordinates), and serialized into long sequences of tokens, ready for the model.
 3.  **Training (`train.py`):** The Transformer model is trained on these sequences to predict the next token (i.e., the next coordinate). It uses Automatic Mixed Precision (`float16`) for faster training.
 4.  **Inference (`sample.py`):** A trained model is loaded, given a starting "prompt" (a few lines of a drawing), and autoregressively generates the rest of the drawing, which is then plotted to an image file.
+
+### 📚 Dataset and License
+
+This project is trained using the **FloorPlanCAD dataset**, a large-scale, real-world dataset containing over 15,000 floor plans. The data is provided in several formats, and this project's pipeline is specifically designed to process the **SVG vector graphic** files.
+
+-   **Homepage:** [https://floorplancad.github.io/](https://floorplancad.github.io/)
+-   **License:** According to the dataset's creators, the *annotations* they've added are licensed under a [Creative Commons Attribution-NonCommercial 4.0 License](https://creativecommons.org/licenses/by-nc/4.0/).
+-   **Important Note:** The creators state that they do not own the copyright of the original drawings themselves. Users are responsible for their use of the dataset.
 
 ### ⚙️ Project Structure
 
@@ -90,7 +96,7 @@ This project uses Conda for environment management to avoid dependency issues.
 Follow these steps in order to train your own model.
 
 #### **Step 1: Convert Raw SVGs**
-Place all your `.svg` files into the `data/svg` folder. Then run the conversion script. It will automatically sort the geometry and save the results in `data/raw`.
+Place all your `.svg` files from the FloorPlanCAD dataset into the `data/svg` folder. Then run the conversion script. It will automatically sort the geometry and save the results in `data/raw`.
 
 ```bash
 python convert_svg_to_json.py
@@ -105,7 +111,7 @@ python process_data.py
 ```
 
 #### **Step 3: Configure and Train the Model**
-Before training, open `src/config.py` and review the settings. The current configuration is optimized for a GPU with ~6-8GB of VRAM.
+Before training, open `src/config.py` and review the settings. The provided configuration is optimized for a GPU with ~6-8GB of VRAM.
 
 | Parameter          | Description                                                                                              | Recommended Value          |
 | ------------------ | -------------------------------------------------------------------------------------------------------- | -------------------------- |
@@ -129,4 +135,3 @@ After training is complete, run the sampling script to see what your model has l
 python -m src.sample
 ```
 This will generate a `generated_floorplan.png` file in the root directory, showing a drawing completed by your model from a predefined prompt. You can edit the `start_drawing` list in `src/sample.py` to give it different prompts.
-
